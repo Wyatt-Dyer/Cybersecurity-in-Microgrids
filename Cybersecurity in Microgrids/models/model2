@@ -1,0 +1,212 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
+import xgboost as xgb
+
+from plotly.subplots import make_subplots
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import RobustScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import AdaBoostClassifier
+from xgboost import XGBClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.impute import SimpleImputer
+import joblib
+import os
+
+df = pd.read_csv('/Cybersecurity-in-Microgrids/Cybersecurity in Microgrids/data/raw/UNSW-NB15_c/UNSW_NB15_training-set.csv')
+test_df = pd.read_csv('/Cybersecurity-in-Microgrids/Cybersecurity in Microgrids/data/raw/UNSW-NB15_c/UNSW_NB15_testing-set.csv')
+
+categorical_columns = df.select_dtypes(include=['object']).columns
+
+df = pd.get_dummies(df, columns=['proto', 'service'], drop_first=True)
+
+label_encoder = LabelEncoder()
+df['state'] = label_encoder.fit_transform(df['state'])
+df['attack_cat'] = label_encoder.fit_transform(df['attack_cat'])
+
+# Feature Engineering
+
+# Interaction between source and destination load
+df['load_interaction'] = df['sload'] * df['dload']
+
+# Total transaction bytes between source and destination
+df['total_bytes'] = df['sbytes'] + df['dbytes']
+
+# Packet flow ratio between source and destination
+df['pkt_flow_ratio'] = df['spkts'] / (df['dpkts'] + 1)
+
+# Bytes difference and ratio
+df['bytes_diff'] = df['sbytes'] - df['dbytes']
+df['bytes_ratio'] = df['sbytes'] / (df['dbytes'] + 1)
+
+# TTL difference
+df['ttl_diff'] = df['sttl'] - df['dttl']
+
+# Jitter difference and ratio
+df['jitter_diff'] = df['sjit'] - df['djit']
+df['jitter_ratio'] = df['sjit'] / (df['djit'] + 1)
+
+# Difference between synack and ackdat times
+df['tcp_time_diff'] = df['synack'] - df['ackdat']
+
+data1 =df.copy()
+data2 =df.copy()
+
+X = data1.drop('label', axis=1)
+y = data1['label']
+
+scalers = [
+    MinMaxScaler(),
+    RobustScaler()
+]
+
+models = [
+    ('KNN', KNeighborsClassifier(), {}),
+    ('Random Forest', RandomForestClassifier(), {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [None, 10, 20, 30],
+        'min_samples_split': [2, 5, 10]
+    }),
+    ('XGBoost', xgb.XGBClassifier(eval_metric='mlogloss'), {
+        'n_estimators': [50, 100, 200],
+        'learning_rate': [0.01, 0.1, 0.2],
+        'max_depth': [3, 6, 9]
+    })
+]
+
+def summarize_metrics(model_name,y_train,y_test,y_train_predict,y_test_predict, existing_df=None):
+
+    scaler_names = {
+        'MinMaxScaler': 'MinMaxScaler',
+        'StandardScaler': 'StandardScaler',
+        'RobustScaler': 'RobustScaler',
+    }
+
+    # Determine the name of the scaler
+    scaler_name = scaler_names.get(type(scaler_name).__name__, 'No Scaling')
+
+
+    # Generating classification reports
+    train_report_dict = classification_report(y_train, y_train_predict, output_dict=True)
+    test_report_dict = classification_report(y_test, y_test_predict, output_dict=True)
+
+    # Extracting and rounding metrics for train
+    accuracy_train = round(train_report_dict['accuracy'], 2)
+    macro_avg_train = train_report_dict['macro avg']
+    precision_train = round(macro_avg_train['precision'], 2)
+    recall_train = round(macro_avg_train['recall'], 2)
+    f1_train = round(macro_avg_train['f1-score'], 2)
+
+    # Extracting and rounding metrics for test
+    accuracy_test = round(test_report_dict['accuracy'], 2)
+    macro_avg_test = test_report_dict['macro avg']
+    precision_test = round(macro_avg_test['precision'], 2)
+    recall_test = round(macro_avg_test['recall'], 2)
+    f1_test = round(macro_avg_test['f1-score'], 2)
+
+    # Create a summary dictionary
+    summary_dict = {
+        'Model': model_name,
+        'Scaling Method': scaler_name,
+        'Train Accuracy': accuracy_train,
+        'Test Accuracy': accuracy_test,
+        'Train Precision': precision_train,
+        'Test Precision': precision_test,
+        'Train Recall': recall_train,
+        'Test Recall': recall_test,
+        'Train F1-Score': f1_train,
+        'Test F1-Score': f1_test
+    }
+
+    summary_df = pd.DataFrame([summary_dict])
+
+    # Append to existing DataFrame or return new DataFrame
+    if existing_df is not None:
+        return pd.concat([existing_df, summary_df], ignore_index=True)
+    else:
+        return summary_df
+    
+def tune_model(model, param_grid, X_train, y_train, X_test, y_test):
+
+    # Fitting the data with GridSearchCV
+    grid_search = GridSearchCV(model, param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+
+    best_model = grid_search.best_estimator_ # Best model
+
+    # Predictions
+    y_train_pred = best_model.predict(X_train)
+    y_test_pred = best_model.predict(X_test)
+    print("Values for class", y_train.value_counts())
+
+    if not os.path.exists('saved_models'):
+        os.makedirs('saved_models')
+
+    model_filename = f'saved_models/{model_name}.joblib'
+    joblib.dump(best_model, model_filename)
+    print(f"{model_name} model saved to {model_filename}")
+
+    # ============== Evaluation ===============
+    train_accuracy = accuracy_score(y_train, y_train_pred)
+    test_accuracy = accuracy_score(y_test, y_test_pred)
+    print("Best Parameters:", grid_search.best_params_)
+    print(f"Training Accuracy: {train_accuracy:.4f}")
+    print(f"Test Accuracy: {test_accuracy:.4f}")
+
+    return best_model
+
+def plot_confusion_matrix(y_true, y_pred, title):
+    conf_matrix = confusion_matrix(y_true, y_pred)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', cbar=False)
+    plt.title(title)
+    plt.ylabel('Actual')
+    plt.xlabel('Predicted')
+    plt.show()
+
+imputer = SimpleImputer(strategy='mean')
+
+for scaler in scalers:
+    # ========= scaling ==========
+    X_scaled = scaler.fit_transform(X)
+    X_scaled = imputer.fit_transform(X_scaled)
+
+    # Train Test Split
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42, stratify=y)
+
+    for model_name, model, param_grid in models:
+        print(f"Running model: {model_name} with {scaler.__class__.__name__}")
+
+        # ============== Hyperparameter Tuning (Finding best parameters) ==========
+        best_model = tune_model(model, param_grid, X_train, y_train, X_test, y_test)
+
+        # Predict using best model
+        y_train_pred = best_model.predict(X_train)
+        y_test_pred = best_model.predict(X_test)
+
+        # ======== Visualize Confusion Matrices ==============
+        # plot_confusion_matrix(y_test, y_test_pred, title=f"Test Confusion Matrix for {model_name}"+
+        
+        
+        print("\n=======================================================\n")
+
+                # ======== Print Classification Report ==============
+        print(f"Classification Report for {model_name} on Test Set")
+        print(classification_report(y_test, y_test_pred))
+
+        print("\n=======================================================\n")
