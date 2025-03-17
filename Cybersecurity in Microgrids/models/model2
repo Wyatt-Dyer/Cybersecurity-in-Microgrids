@@ -200,13 +200,13 @@ for scaler in scalers:
         y_test_pred = best_model.predict(X_test)
 
         # ======== Visualize Confusion Matrices ==============
-        # plot_confusion_matrix(y_test, y_test_pred, title=f"Test Confusion Matrix for {model_name}"+
+        plot_confusion_matrix(y_test, y_test_pred, title=f"Test Confusion Matrix for {model_name}")
         
         
         print("\n=======================================================\n")
 
                 # ======== Print Classification Report ==============
-        print(f"Classification Report for {model_name} on Test Set")
+        print(f"Classification Report for {model_name}, {scaler.__class__.__name__} on Test Set")
         print(classification_report(y_test, y_test_pred))
 
         print("\n=======================================================\n")
